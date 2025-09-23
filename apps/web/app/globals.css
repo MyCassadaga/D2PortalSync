@@ -1,0 +1,6 @@
+/* apps/web/app/globals.css */
+:root {
+  color-scheme: light dark;
+}
+* { box-sizing: border-box; }
+a { text-decoration: none; }
