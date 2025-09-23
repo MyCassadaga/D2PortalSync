@@ -1,0 +1,5 @@
+{
+  "name": "destiny-portal-planner",
+  "private": true,
+  "workspaces": ["apps/*"]
+}
