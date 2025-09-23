@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import fetch from "node-fetch";
 import { z } from "zod";
+
 
 const app = express();
 app.use(cors({ origin: process.env.ALLOW_ORIGIN?.split(",") || true, credentials: true }));
