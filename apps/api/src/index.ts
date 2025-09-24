@@ -8,6 +8,9 @@ import profileRoutes from './routes/profile';
 import portalRoutes from './routes/portal';
 import forecastRoutes from './routes/forecast';
 import { storeSession } from './db';
+import { ensureSchema } from './db';
+ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
+
 
 const app = express();
 
