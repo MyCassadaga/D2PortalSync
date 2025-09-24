@@ -10,6 +10,7 @@ import forecastRoutes from './routes/forecast';
 import { storeSession } from './db';
 import { ensureSchema } from './db';
 ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
+import dbtestRoutes from './routes/dbtest'; app.use(dbtestRoutes);
 
 
 const app = express();
