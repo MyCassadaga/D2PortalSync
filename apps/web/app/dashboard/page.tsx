@@ -13,37 +13,55 @@ export default function Dashboard() {
   const [modifiers, setModifiers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  uuseEffect(() => {
-  // Capture ?sid=... after redirect and stash it
-  try {
-    const url = new URL(window.location.href);
-    const sid = url.searchParams.get('sid');
-    if (sid) {
-      sessionStorage.setItem('sid', sid);
-      url.searchParams.delete('sid');
-      window.history.replaceState({}, '', url.toString());
-    }
-  } catch {}
-  (async () => {
+  useEffect(() => {
+    // Capture ?sid=... after redirect and stash it
     try {
-      const p = await apiGet<any>("/me/profile");
-      setProfile(p);
-      const a = await apiGet<any>("/portal/activities");
-      setActivities(a.activities || []);
-    } catch (e: any) { setError(e.message); }
-  })();
-}, []);
+      const url = new URL(window.location.href);
+      const sid = url.searchParams.get("sid");
+      if (sid) {
+        sessionStorage.setItem("sid", sid);
+        url.searchParams.delete("sid");
+        window.history.replaceState({}, "", url.toString());
+      }
+    } catch {}
 
-  if (error) return <main style={{padding:24}}><h2>Error</h2><pre>{error}</pre></main>;
-  if (!profile) return <main style={{padding:24}}>Loading…</main>;
+    (async () => {
+      try {
+        const p = await apiGet<any>("/me/profile");
+        setProfile(p);
+        const a = await apiGet<any>("/portal/activities");
+        setActivities(a.activities || []);
+      } catch (e: any) {
+        setError(e.message || String(e));
+      }
+    })();
+  }, []);
+
+  if (error) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>Error</h2>
+        <pre>{error}</pre>
+      </main>
+    );
+  }
+
+  if (!profile) {
+    return <main style={{ padding: 24 }}>Loading…</main>;
+  }
 
   return (
     <main style={{ padding: 24, display: "grid", gap: 16 }}>
       <header>
         <h2>Dashboard</h2>
-        <p>Highest Power: <b>{profile.highestPower}</b></p>
+        <p>
+          Highest Power: <b>{profile.highestPower}</b>
+        </p>
         {selectedActivity ? (
-          <p>Selected: <b>{selectedActivity.name ?? "(unknown)"}</b> • Rec Light: {selectedActivity.recommendedLight ?? "?"}</p>
+          <p>
+            Selected: <b>{selectedActivity.name ?? "(unknown)"}</b> • Rec Light:{" "}
+            {selectedActivity.recommendedLight ?? "?"}
+          </p>
         ) : (
           <p>Select an activity or add a Custom activity below.</p>
         )}
