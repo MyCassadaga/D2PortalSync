@@ -102,12 +102,12 @@ app.get('/auth/callback', async (req, res) => {
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       expires_in: tokens.expires_in
-    }), { httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
+    }), { httpOnly: true, secure: true, sameSite: 'none', path: '/' });
   }
 
   if (sessionId) {
     res.cookie('session_id', sessionId, {
-      httpOnly: true, secure: true, sameSite: 'lax', path: '/'
+      httpOnly: true, secure: true, sameSite: 'none', path: '/'
     });
   }
 
