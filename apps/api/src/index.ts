@@ -3,6 +3,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { z } from "zod";
 import { storeSession } from "./db";
+import profileRoutes from "./routes/profile";
+app.use(profileRoutes);
+
 
 const BungieTokenSchema = z.object({
   token_type: z.string(),
