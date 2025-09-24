@@ -35,6 +35,7 @@ const isAllowed = (origin: string) => {
   return false;
 };
 
+import type { CorsOptions, CorsOptionsDelegate } from 'cors';
 const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
   const originHeader = (req.headers?.origin as string | undefined) || '';
   let options: CorsOptions;
@@ -46,9 +47,10 @@ const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
   callback(null, options);
 };
 
+// Use CORS for all routes + explicitly handle preflight
 app.use(cors(corsOptionsDelegate));
-app.use(express.json());
-app.use(cookieParser());
+app.options('*', cors(corsOptionsDelegate));
+
 
 // Ensure schema on boot (does not crash the app if it fails)
 ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
