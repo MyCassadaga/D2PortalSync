@@ -7,15 +7,12 @@ import { z } from 'zod';
 import profileRoutes from './routes/profile';
 import portalRoutes from './routes/portal';
 import forecastRoutes from './routes/forecast';
-import { storeSession } from './db';
-import { ensureSchema } from './db';
-ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
-import dbtestRoutes from './routes/dbtest'; app.use(dbtestRoutes);
+import dbtestRoutes from './routes/dbtest';
+import { storeSession, ensureSchema } from './db';
 
-
+// ----- App setup (DECLARE APP FIRST) -----
 const app = express();
 
-// CORS
 const allowed = (process.env.ALLOW_ORIGIN ? process.env.ALLOW_ORIGIN.split(',') : [])
   .map(s => s.trim())
   .filter(Boolean);
@@ -27,10 +24,13 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+// Ensure schema on boot (does not crash the app if it fails)
+ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
+
 // Health
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// ---- OAuth types
+// ----- OAuth token schema -----
 const BungieTokenSchema = z.object({
   token_type: z.string(),
   access_token: z.string(),
@@ -41,7 +41,7 @@ const BungieTokenSchema = z.object({
 });
 type BungieToken = z.infer<typeof BungieTokenSchema>;
 
-// ---- OAuth start
+// Start OAuth
 app.get('/auth/login', (_req, res) => {
   const url = new URL('https://www.bungie.net/en/OAuth/Authorize');
   url.searchParams.set('client_id', String(process.env.BUNGIE_CLIENT_ID));
@@ -50,7 +50,7 @@ app.get('/auth/login', (_req, res) => {
   res.redirect(url.toString());
 });
 
-// ---- OAuth callback
+// OAuth callback
 app.get('/auth/callback', async (req, res) => {
   const code = (req.query.code as string) || '';
   if (!code) {
@@ -58,7 +58,6 @@ app.get('/auth/callback', async (req, res) => {
     return;
   }
 
-  // Build Authorization header without template literals
   const cid = String(process.env.BUNGIE_CLIENT_ID || '');
   const csec = String(process.env.BUNGIE_CLIENT_SECRET || '');
   const authBasic = 'Basic ' + Buffer.from(cid + ':' + csec).toString('base64');
@@ -88,31 +87,41 @@ app.get('/auth/callback', async (req, res) => {
 
   const membershipId = tokens.membership_id ? tokens.membership_id : 'pending';
 
-  const sessionId = await storeSession({
-    membership_id: membershipId,
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_in: tokens.expires_in
-  });
+  // Store server-side session, don’t crash if DB is down
+  let sessionId: string | null = null;
+  try {
+    sessionId = await storeSession({
+      membership_id: membershipId,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_in: tokens.expires_in
+    });
+  } catch (e: any) {
+    console.error('storeSession failed:', e?.message || e);
+    res.cookie('session_tmp', JSON.stringify({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_in: tokens.expires_in
+    }), { httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
+  }
 
-  res.cookie('session_id', sessionId, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    path: '/'
-  });
+  if (sessionId) {
+    res.cookie('session_id', sessionId, {
+      httpOnly: true, secure: true, sameSite: 'lax', path: '/'
+    });
+  }
 
-  // Avoid template strings to prevent copy/paste quote issues
   const front = String(process.env.FRONTEND_URL || 'http://localhost:3000');
   res.redirect(front + '/dashboard');
 });
 
-// Feature routes
+// ----- Feature routes (REGISTER AFTER app IS DECLARED) -----
+app.use(dbtestRoutes);
 app.use(profileRoutes);
 app.use(portalRoutes);
 app.use(forecastRoutes);
 
-// Start
+// ----- Start server -----
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
   console.log('API listening on :' + port);
