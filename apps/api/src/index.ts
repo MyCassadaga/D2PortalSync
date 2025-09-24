@@ -2,7 +2,17 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { z } from "zod";
+import { storeSession } from "./db";
 
+const BungieTokenSchema = z.object({
+  token_type: z.string(),
+  access_token: z.string(),
+  expires_in: z.number(),
+  refresh_token: z.string().optional(),
+  refresh_expires_in: z.number().optional(),
+  membership_id: z.string().optional()
+});
+type BungieToken = z.infer<typeof BungieTokenSchema>;
 
 const app = express();
 app.use(cors({ origin: process.env.ALLOW_ORIGIN?.split(",") || true, credentials: true }));
@@ -52,12 +62,29 @@ app.get("/auth/callback", async (req, res) => {
       redirect_uri: process.env.OAUTH_REDIRECT_URL!
     }).toString()
   });
-
   if (!tokenRes.ok) {
     const errText = await tokenRes.text().catch(() => "");
     return res.status(502).send(`Bungie token exchange failed (${tokenRes.status}): ${errText}`);
   }
+  const tokens: BungieToken = BungieTokenSchema.parse(await tokenRes.json());
 
+  // membership_id sometimes isn't in this payload; we’ll fill later after /User/GetMembershipsForCurrentUser
+  const membershipId = tokens.membership_id ?? "pending";
+
+  const sessionId = await storeSession({
+    membership_id: membershipId,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    expires_in: tokens.expires_in
+  });
+
+  res.cookie("session_id", sessionId, {
+    httpOnly: true, secure: true, sameSite: "lax", path: "/"
+  });
+
+  const front = process.env.FRONTEND_URL || "https://example.com";
+  res.redirect(`${front}/dashboard`);
+});
   // 👇 This line fixes the "unknown" issue by validating + typing
   const tokens: BungieToken = BungieTokenSchema.parse(await tokenRes.json());
 
