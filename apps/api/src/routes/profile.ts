@@ -1,54 +1,50 @@
-import { Router } from "express";
-import { getSession, pool } from "../db";
-import { bungieFetch } from "../services/bungie";
-import { cacheGet, cacheSet } from "../cache";
+import { Router } from 'express';
+import { getSession, pool } from '../db';
 
 const r = Router();
 
-r.get("/me/profile", async (req, res) => {
-  const sid = req.cookies.session_id;
-  if (!sid) return res.status(401).json({ error: "no session" });
-  const session = await getSession(sid);
-  if (!session) return res.status(401).json({ error: "session expired" });
+async function bungieFetch(path: string, accessToken: string) {
+  const url = 'https://www.bungie.net/Platform' + path;
+  const res = await fetch(url, {
+    headers: {
+      'X-API-Key': String(process.env.BUNGIE_API_KEY),
+      'Authorization': 'Bearer ' + accessToken
+    }
+  });
+  if (!res.ok) throw new Error('Bungie error: ' + res.status);
+  return await res.json();
+}
 
-  // Try cache
-  const cacheKey = `profile:${sid}`;
-  const cached = await cacheGet<any>(cacheKey);
-  if (cached) return res.json(cached);
+r.get('/me/profile', async (req, res) => {
+  const sid = req.cookies.session_id as string | undefined;
+  if (!sid) { res.status(401).json({ error: 'no session' }); return; }
+  const session = await getSession(sid);
+  if (!session) { res.status(401).json({ error: 'session expired' }); return; }
 
   // 1) memberships
-  const memberships = await bungieFetch<any>({
-    path: "/User/GetMembershipsForCurrentUser/",
-    accessToken: session.access_token
-  });
-  const m = memberships?.Response?.destinyMemberships?.[0];
-  if (!m) return res.status(400).json({ error: "no destiny memberships" });
+  const me = await bungieFetch('/User/GetMembershipsForCurrentUser/', session.access_token);
+  const m = me?.Response?.destinyMemberships?.[0];
+  if (!m) { res.status(400).json({ error: 'no destiny memberships' }); return; }
 
-  // Update membership_id if pending
-  if (session.membership_id === "pending") {
-    await pool.query("update sessions set membership_id = $1 where id = $2", [m.membershipId, sid]);
+  // If we stored 'pending', update membership_id now
+  if (session.membership_id === 'pending') {
+    await pool.query('update sessions set membership_id = $1 where id = $2', [m.membershipId, sid]);
   }
 
   // 2) profile
-  const prof = await bungieFetch<any>({
-    path: `/Destiny2/${m.membershipType}/Profile/${m.membershipId}/?components=100,200`,
-    accessToken: session.access_token
-  });
+  const prof = await bungieFetch(
+    `/Destiny2/${m.membershipType}/Profile/${m.membershipId}/?components=100,200`, session.access_token
+  );
 
-  // summarize: name, characterIds, highest power
   const chars = Object.values(prof.Response.characters.data || {}) as any[];
-  const powerList = chars.map(c => c.light as number);
-  const highestPower = Math.max(...powerList, 0);
+  const highestPower = Math.max(...chars.map(c => c.light as number), 0);
 
-  const out = {
+  res.json({
     membershipId: m.membershipId,
     membershipType: m.membershipType,
     characterIds: prof.Response.profile.data.characterIds,
     highestPower
-  };
-
-  await cacheSet(cacheKey, out, 90); // 90s TTL
-  res.json(out);
+  });
 });
 
 export default r;
