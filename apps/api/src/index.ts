@@ -2,30 +2,31 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { z } from "zod";
-import { storeSession } from "./db";
+
 import profileRoutes from "./routes/profile";
-app.use(profileRoutes);
+import portalRoutes from "./routes/portal";
+import forecastRoutes from "./routes/forecast";
+import { storeSession } from "./db";
 
-
-const BungieTokenSchema = z.object({
-  token_type: z.string(),
-  access_token: z.string(),
-  expires_in: z.number(),
-  refresh_token: z.string().optional(),
-  refresh_expires_in: z.number().optional(),
-  membership_id: z.string().optional()
-});
-type BungieToken = z.infer<typeof BungieTokenSchema>;
-
+// ----- App setup -----
 const app = express();
-app.use(cors({ origin: process.env.ALLOW_ORIGIN?.split(",") || true, credentials: true }));
+
+// Allow CORS from your Vercel frontend
+const allowed = (process.env.ALLOW_ORIGIN?.split(",") || [])
+  .map(s => s.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: allowed.length ? allowed : true,
+  credentials: true
+}));
+
 app.use(express.json());
 app.use(cookieParser());
 
-// Health
+// Health check
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---- Zod schema for Bungie token response ----
+// ----- OAuth -----
 const BungieTokenSchema = z.object({
   token_type: z.string(),
   access_token: z.string(),
@@ -36,7 +37,7 @@ const BungieTokenSchema = z.object({
 });
 type BungieToken = z.infer<typeof BungieTokenSchema>;
 
-// OAuth start
+// Start OAuth
 app.get("/auth/login", (_req, res) => {
   const url = new URL("https://www.bungie.net/en/OAuth/Authorize");
   url.searchParams.set("client_id", process.env.BUNGIE_CLIENT_ID!);
@@ -52,60 +53,3 @@ app.get("/auth/callback", async (req, res) => {
 
   const tokenRes = await fetch("https://www.bungie.net/Platform/App/OAuth/Token/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-API-Key": process.env.BUNGIE_API_KEY!,
-      "Authorization": "Basic " + Buffer.from(
-        `${process.env.BUNGIE_CLIENT_ID}:${process.env.BUNGIE_CLIENT_SECRET}`
-      ).toString("base64")
-    },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: process.env.OAUTH_REDIRECT_URL!
-    }).toString()
-  });
-  if (!tokenRes.ok) {
-    const errText = await tokenRes.text().catch(() => "");
-    return res.status(502).send(`Bungie token exchange failed (${tokenRes.status}): ${errText}`);
-  }
-  const tokens: BungieToken = BungieTokenSchema.parse(await tokenRes.json());
-
-  // membership_id sometimes isn't in this payload; we’ll fill later after /User/GetMembershipsForCurrentUser
-  const membershipId = tokens.membership_id ?? "pending";
-
-  const sessionId = await storeSession({
-    membership_id: membershipId,
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_in: tokens.expires_in
-  });
-
-  res.cookie("session_id", sessionId, {
-    httpOnly: true, secure: true, sameSite: "lax", path: "/"
-  });
-
-  const front = process.env.FRONTEND_URL || "https://example.com";
-  res.redirect(`${front}/dashboard`);
-});
-  // 👇 This line fixes the "unknown" issue by validating + typing
-  const tokens: BungieToken = BungieTokenSchema.parse(await tokenRes.json());
-
-  // For MVP: cookie. (Later: store in DB)
-  const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
-  res.cookie("session", JSON.stringify({
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_at: expiresAt
-  }), {
-    httpOnly: true,
-    secure: true,          // OK on Render (HTTPS). For local dev you may set false.
-    sameSite: "lax",
-    path: "/"
-  });
-
-  res.redirect((process.env.FRONTEND_URL || "http://localhost:3000") + "/dashboard");
-});
-
-const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API on :${port}`));
