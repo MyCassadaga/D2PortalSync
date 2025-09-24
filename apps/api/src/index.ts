@@ -11,10 +11,10 @@ import { storeSession } from "./db";
 // ----- App setup -----
 const app = express();
 
-// Allow CORS from your Vercel frontend
 const allowed = (process.env.ALLOW_ORIGIN?.split(",") || [])
   .map(s => s.trim())
   .filter(Boolean);
+
 app.use(cors({
   origin: allowed.length ? allowed : true,
   credentials: true
@@ -49,7 +49,12 @@ app.get("/auth/login", (_req, res) => {
 // OAuth callback
 app.get("/auth/callback", async (req, res) => {
   const code = req.query.code as string | undefined;
-  if (!code) return res.status(400).send("Missing code");
+  if (!code) {
+    res.status(400).send("Missing code");
+    return;
+  }
 
   const tokenRes = await fetch("https://www.bungie.net/Platform/App/OAuth/Token/", {
     method: "POST",
+    headers: {
+      "
