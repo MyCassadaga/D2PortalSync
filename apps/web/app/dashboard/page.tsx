@@ -57,32 +57,3 @@ export default function Dashboard() {
         <p>
           Highest Power: <b>{profile.highestPower}</b>
         </p>
-        {selectedActivity ? (
-          <p>
-            Selected: <b>{selectedActivity.name ?? "(unknown)"}</b> • Rec Light:{" "}
-            {selectedActivity.recommendedLight ?? "?"}
-          </p>
-        ) : (
-          <p>Select an activity or add a Custom activity below.</p>
-        )}
-      </header>
-
-      <ActivityTable activities={activities} onSelect={setSelectedActivity} />
-
-      <ModifierPicker
-        activity={selectedActivity}
-        difficulty={difficulty}
-        setDifficulty={setDifficulty}
-        selected={modifiers}
-        setSelected={setModifiers}
-      />
-
-      <FireteamCompare
-        activity={selectedActivity}
-        difficulty={difficulty}
-        modifiers={modifiers}
-        myPower={profile?.highestPower ?? null}
-      />
-    </main>
-  );
-}
