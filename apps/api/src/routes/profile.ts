@@ -16,7 +16,51 @@ async function bungieFetch(path: string, accessToken: string) {
 }
 
 r.get('/me/profile', async (req, res) => {
-  const sid = req.cookies.session_id as string | undefined;
+  // 0) Check Authorization header for sid
+  let authSid: string | null = null;
+  const auth = (req.headers.authorization as string | undefined) || '';
+  const m = auth.match(/^Bearer\s+sid:(.+)$/i);
+  if (m) authSid = m[1];
+
+  // 1) Try DB-backed session via cookie or Authorization fallback
+  const cookieSid = req.cookies.session_id as string | undefined;
+  const sid = authSid || cookieSid;
+
+  const tmpRaw = req.cookies.session_tmp as string | undefined;
+
+  let accessToken: string | null = null;
+  let membershipId: string | null = null;
+
+  if (sid) {
+    try {
+      const s = await getSession(sid);
+      if (s) {
+        accessToken = s.access_token;
+        membershipId = s.membership_id;
+      }
+    } catch (e: any) {
+      console.error('getSession error:', e?.message || e);
+    }
+  }
+
+  // 2) Fallback to temporary cookie if DB session missing
+  if (!accessToken && tmpRaw) {
+    try {
+      const tmp = JSON.parse(tmpRaw);
+      accessToken = tmp.access_token || null;
+    } catch {}
+  }
+
+  if (!accessToken) {
+    return res.status(401).json({
+      error: 'no session',
+      haveAuthSid: !!authSid,
+      haveCookieSid: !!cookieSid,
+      haveSessionTmp: !!tmpRaw
+    });
+  }
+  // ... keep the rest of your handler unchanged ...
+
   if (!sid) { res.status(401).json({ error: 'no session' }); return; }
   const session = await getSession(sid);
   if (!session) { res.status(401).json({ error: 'session expired' }); return; }
