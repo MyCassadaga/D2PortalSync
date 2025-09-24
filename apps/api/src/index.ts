@@ -1,7 +1,7 @@
 // apps/api/src/index.ts
 import express from 'express';
 import cors from 'cors';
-import type { CorsOptionsDelegate } from 'cors';
+import type { CorsOptions, CorsOptionsDelegate } from 'cors';
 import cookieParser from 'cookie-parser';
 import { z } from 'zod';
 
@@ -35,13 +35,18 @@ const isAllowed = (origin: string) => {
   return false;
 };
 
-const corsDelegate: CorsOptionsDelegate = (req, cb) => {
-  const origin = req.header('Origin') || '';
-  if (!origin || isAllowed(origin)) cb(null, { origin: true, credentials: true });
-  else cb(new Error('CORS blocked for origin: ' + origin), { origin: false });
+const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
+  const originHeader = (req.headers?.origin as string | undefined) || '';
+  let options: CorsOptions;
+  if (!originHeader || isAllowed(originHeader)) {
+    options = { origin: true, credentials: true };
+  } else {
+    options = { origin: false };
+  }
+  callback(null, options);
 };
 
-app.use(cors(corsDelegate));
+app.use(cors(corsOptionsDelegate));
 app.use(express.json());
 app.use(cookieParser());
 
