@@ -9,24 +9,24 @@ import portalRoutes from './routes/portal';
 import forecastRoutes from './routes/forecast';
 import { storeSession } from './db';
 
-// ----- App setup -----
 const app = express();
 
-const allowed =
-  (process.env.ALLOW_ORIGIN?.split(',') || []).map(s => s.trim()).filter(Boolean);
+// CORS
+const allowed = (process.env.ALLOW_ORIGIN ? process.env.ALLOW_ORIGIN.split(',') : [])
+  .map(s => s.trim())
+  .filter(Boolean);
 
 app.use(cors({
   origin: allowed.length ? allowed : true,
   credentials: true
 }));
-
 app.use(express.json());
 app.use(cookieParser());
 
-// Health check
+// Health
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// ----- OAuth -----
+// ---- OAuth types
 const BungieTokenSchema = z.object({
   token_type: z.string(),
   access_token: z.string(),
@@ -37,50 +37,52 @@ const BungieTokenSchema = z.object({
 });
 type BungieToken = z.infer<typeof BungieTokenSchema>;
 
-// Start OAuth
+// ---- OAuth start
 app.get('/auth/login', (_req, res) => {
   const url = new URL('https://www.bungie.net/en/OAuth/Authorize');
-  url.searchParams.set('client_id', process.env.BUNGIE_CLIENT_ID!);
+  url.searchParams.set('client_id', String(process.env.BUNGIE_CLIENT_ID));
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('redirect_uri', process.env.OAUTH_REDIRECT_URL!);
+  url.searchParams.set('redirect_uri', String(process.env.OAUTH_REDIRECT_URL));
   res.redirect(url.toString());
 });
 
-// OAuth callback
+// ---- OAuth callback
 app.get('/auth/callback', async (req, res) => {
-  const code = req.query.code as string | undefined;
+  const code = (req.query.code as string) || '';
   if (!code) {
     res.status(400).send('Missing code');
     return;
   }
 
+  // Build Authorization header without template literals
+  const cid = String(process.env.BUNGIE_CLIENT_ID || '');
+  const csec = String(process.env.BUNGIE_CLIENT_SECRET || '');
+  const authBasic = 'Basic ' + Buffer.from(cid + ':' + csec).toString('base64');
+
   const tokenRes = await fetch('https://www.bungie.net/Platform/App/OAuth/Token/', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'X-API-Key': process.env.BUNGIE_API_KEY!,
-      'Authorization':
-        'Basic ' + Buffer.from(
-          `${process.env.BUNGIE_CLIENT_ID}:${process.env.BUNGIE_CLIENT_SECRET}`
-        ).toString('base64')
+      'X-API-Key': String(process.env.BUNGIE_API_KEY),
+      'Authorization': authBasic
     },
     body: new URLSearchParams({
       grant_type: 'authorization_code',
-      code,
-      redirect_uri: process.env.OAUTH_REDIRECT_URL!
+      code: code,
+      redirect_uri: String(process.env.OAUTH_REDIRECT_URL)
     }).toString()
   });
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text().catch(() => '');
-    res.status(502).send(`Bungie token exchange failed (${tokenRes.status}): ${errText}`);
+    res.status(502).send('Bungie token exchange failed (' + tokenRes.status + '): ' + errText);
     return;
   }
 
-  const tokensJson = await tokenRes.json();
+  const tokensJson: unknown = await tokenRes.json();
   const tokens: BungieToken = BungieTokenSchema.parse(tokensJson);
 
-  const membershipId = tokens.membership_id ?? 'pending';
+  const membershipId = tokens.membership_id ? tokens.membership_id : 'pending';
 
   const sessionId = await storeSession({
     membership_id: membershipId,
@@ -96,4 +98,18 @@ app.get('/auth/callback', async (req, res) => {
     path: '/'
   });
 
-  const front = process.env.FRONTEND_URL || 'http://localhost:3000_
+  // Avoid template strings to prevent copy/paste quote issues
+  const front = String(process.env.FRONTEND_URL || 'http://localhost:3000');
+  res.redirect(front + '/dashboard');
+});
+
+// Feature routes
+app.use(profileRoutes);
+app.use(portalRoutes);
+app.use(forecastRoutes);
+
+// Start
+const port = Number(process.env.PORT || 4000);
+app.listen(port, () => {
+  console.log('API listening on :' + port);
+});
