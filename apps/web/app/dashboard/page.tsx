@@ -13,16 +13,26 @@ export default function Dashboard() {
   const [modifiers, setModifiers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const p = await apiGet<any>("/me/profile");
-        setProfile(p);
-        const a = await apiGet<any>("/portal/activities");
-        setActivities(a.activities || []);
-      } catch (e: any) { setError(e.message); }
-    })();
-  }, []);
+  uuseEffect(() => {
+  // Capture ?sid=... after redirect and stash it
+  try {
+    const url = new URL(window.location.href);
+    const sid = url.searchParams.get('sid');
+    if (sid) {
+      sessionStorage.setItem('sid', sid);
+      url.searchParams.delete('sid');
+      window.history.replaceState({}, '', url.toString());
+    }
+  } catch {}
+  (async () => {
+    try {
+      const p = await apiGet<any>("/me/profile");
+      setProfile(p);
+      const a = await apiGet<any>("/portal/activities");
+      setActivities(a.activities || []);
+    } catch (e: any) { setError(e.message); }
+  })();
+}, []);
 
   if (error) return <main style={{padding:24}}><h2>Error</h2><pre>{error}</pre></main>;
   if (!profile) return <main style={{padding:24}}>Loading…</main>;
