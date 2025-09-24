@@ -140,8 +140,12 @@ app.get('/auth/callback', async (req, res) => {
     });
   }
 
-  const front = String(process.env.FRONTEND_URL || 'http://localhost:3000');
-  res.redirect(front + '/dashboard');
+    const front = String(process.env.FRONTEND_URL || 'http://localhost:3000');
+  // add ?sid=... so the frontend can store it and use Authorization header
+  let redirectUrl = front + '/dashboard';
+  if (sessionId) redirectUrl += '?sid=' + encodeURIComponent(sessionId);
+  res.redirect(redirectUrl);
+
 });
 
 // ----- Feature routes (REGISTER AFTER app IS DECLARED) -----
