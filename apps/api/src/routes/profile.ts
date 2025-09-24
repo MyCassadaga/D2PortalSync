@@ -16,15 +16,19 @@ async function bungieFetch(path: string, accessToken: string) {
 }
 
 r.get('/me/profile', async (req, res) => {
-  // Authorization: Bearer sid:<sessionId> (header-based fallback)
+  // 0) Fallbacks for session id
+  //    a) Authorization: Bearer sid:<sessionId>
+  //    b) Cookie: session_id
+  //    c) Query: ?sid=<sessionId>   <-- NEW
   const authHeader = (req.headers.authorization as string | undefined) ?? '';
   let authSid: string | null = null;
   const sidMatch = authHeader.match(/^Bearer\s+sid:(.+)$/i);
   if (sidMatch) authSid = sidMatch[1];
 
-  // Cookie-based session id
   const cookieSid = req.cookies.session_id as string | undefined;
-  const sid = authSid || cookieSid;
+  const urlSid = typeof req.query.sid === 'string' ? req.query.sid : null;
+
+  const sid = authSid || cookieSid || urlSid;
 
   // Temporary cookie fallback (JSON string from /auth/callback catch)
   const tmpRaw = req.cookies.session_tmp as string | undefined;
@@ -58,6 +62,7 @@ r.get('/me/profile', async (req, res) => {
       error: 'no session',
       haveAuthSid: !!authSid,
       haveCookieSid: !!cookieSid,
+      haveUrlSid: !!urlSid,
       haveSessionTmp: !!tmpRaw
     });
   }
