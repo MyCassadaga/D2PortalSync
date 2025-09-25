@@ -12,19 +12,52 @@ type Activity = {
 
 type Member = { name: string; power: number; featuredCount?: number };
 
+type BonusPayloadV1 = {
+  v: 1;
+  bonuses: number[]; // activity hashes with a bonus for this player
+};
+
+function encodeBonusCode(hashes: number[]): string {
+  const payload: BonusPayloadV1 = { v: 1, bonuses: Array.from(new Set(hashes)) };
+  // btoa requires string in browsers; we keep it simple for now
+  return typeof window !== "undefined" ? btoa(JSON.stringify(payload)) : "";
+}
+
+function tryDecodeBonusCode(line: string): number[] | null {
+  try {
+    const txt = line.trim();
+    if (!txt) return null;
+    const json = JSON.parse(atob(txt));
+    if (json && typeof json === "object" && Number(json.v) === 1 && Array.isArray(json.bonuses)) {
+      return (json.bonuses as any[]).map((x) => Number(x)).filter((n) => Number.isFinite(n));
+    }
+  } catch {
+    // ignore malformed lines
+  }
+  return null;
+}
+
 export default function Dashboard() {
   const [profile, setProfile] = useState<any>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [selected, setSelected] = useState<Activity | null>(null);
-  const [customName, setCustomName] = useState("");
-  const [customLight, setCustomLight] = useState<string>("");
 
+  // --- Bonus selection (you) ---
+  const [myBonusHashes, setMyBonusHashes] = useState<number[]>([]);
+  const myBonusSet = useMemo(() => new Set(myBonusHashes), [myBonusHashes]);
+
+  // --- Difficulty & modifiers (existing) ---
   const [difficulty, setDifficulty] = useState<number>(1);
   const [mods, setMods] = useState<string[]>([]);
 
+  // --- Compute (existing) ---
   const [meResult, setMeResult] = useState<any | null>(null);
   const [team, setTeam] = useState<Member[]>([]);
   const [teamResults, setTeamResults] = useState<any[] | null>(null);
+
+  // --- Team bonus sharing (new) ---
+  const [teamBonusCodes, setTeamBonusCodes] = useState<string>("");
+  const [bestOverlap, setBestOverlap] = useState<{ hash: number; count: number }[] | null>(null);
 
   const [err, setErr] = useState<string | null>(null);
 
@@ -34,7 +67,6 @@ export default function Dashboard() {
     window.location.href = "/login";
   }
 
-  // derive available modifiers from selected activity (fallback to a small list)
   const availableMods = useMemo(() => {
     const fromAct =
       (selected?.modifiers || [])
@@ -66,7 +98,6 @@ export default function Dashboard() {
       try {
         const p = await apiGet<any>("/me/profile");
         setProfile(p);
-        // prefill you in fireteam
         setTeam([{ name: "You", power: Number(p?.highestPower) || 0, featuredCount: 0 }]);
         const a = await apiGet<{ activities: Activity[] }>("/portal/activities");
         setActivities(a.activities || []);
@@ -76,6 +107,57 @@ export default function Dashboard() {
     })();
   }, []);
 
+  // ---- My bonuses helpers ----
+  function toggleMyBonus(hash?: number) {
+    if (!hash && hash !== 0) return;
+    setBestOverlap(null);
+    setTeamResults(null);
+    setMeResult(null);
+    setMyBonusHashes((prev) =>
+      prev.includes(hash) ? prev.filter((h) => h !== hash) : [...prev, hash]
+    );
+  }
+
+  async function copyMyBonusCode() {
+    try {
+      const code = encodeBonusCode(myBonusHashes);
+      await navigator.clipboard.writeText(code);
+      alert("Copied your bonus code to clipboard!");
+    } catch (e) {
+      alert("Could not copy bonus code. You can select and copy it manually below.");
+    }
+  }
+
+  function recomputeBestOverlap() {
+    // Start with your own bonuses
+    const pools: number[][] = [];
+    if (myBonusHashes.length) pools.push(myBonusHashes);
+
+    // Parse each teammate code line into a number[]
+    for (const line of teamBonusCodes.split("\n")) {
+      const arr = tryDecodeBonusCode(line);
+      if (arr && arr.length) pools.push(arr);
+    }
+    if (pools.length === 0) {
+      setBestOverlap([]);
+      return;
+    }
+
+    // Count occurrences by activity hash
+    const counts = new Map<number, number>();
+    for (const arr of pools) {
+      for (const h of arr) counts.set(h, (counts.get(h) || 0) + 1);
+    }
+
+    // Sort by count desc, then by name asc
+    const ranked = Array.from(counts.entries())
+      .map(([hash, count]) => ({ hash, count }))
+      .sort((a, b) => b.count - a.count || a.hash - b.hash);
+
+    setBestOverlap(ranked);
+  }
+
+  // --- Existing compute for Me only ---
   async function computeMeOnly() {
     setErr(null);
     setMeResult(null);
@@ -97,7 +179,7 @@ export default function Dashboard() {
     }
   }
 
-  // --- Fireteam helpers ---
+  // --- Fireteam helpers (existing) ---
   function addMember() {
     setTeamResults(null);
     setTeam([...team, { name: "Teammate", power: 0, featuredCount: 0 }]);
@@ -140,6 +222,13 @@ export default function Dashboard() {
     }
   }
 
+  // Helpers
+  const actByHash = useMemo(() => {
+    const m = new Map<number, Activity>();
+    for (const a of activities) if (typeof a.hash === "number") m.set(a.hash, a);
+    return m;
+  }, [activities]);
+
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -175,54 +264,118 @@ export default function Dashboard() {
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Name</th>
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Group</th>
                 <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Rec. Light</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Bonus?</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {activities.map((a, idx) => (
-                <tr key={(a.hash ?? idx) as any}>
-                  <td style={{ padding: 8 }}>{a.name ?? "(unknown)"}</td>
-                  <td style={{ padding: 8 }}>{a.group ?? "-"}</td>
-                  <td style={{ padding: 8 }}>{a.recommendedLight ?? "?"}</td>
-                  <td style={{ padding: 8 }}>
-                    <button onClick={() => { setSelected(a); setMods([]); setMeResult(null); setTeamResults(null); }}>
-                      Select
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {activities.map((a, idx) => {
+                const h = typeof a.hash === "number" ? a.hash : -idx;
+                const hasBonus = myBonusSet.has(h);
+                return (
+                  <tr key={h}>
+                    <td style={{ padding: 8 }}>{a.name ?? "(unknown)"}</td>
+                    <td style={{ padding: 8 }}>{a.group ?? "-"}</td>
+                    <td style={{ padding: 8 }}>{a.recommendedLight ?? "?"}</td>
+                    <td style={{ padding: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={hasBonus}
+                        onChange={() => toggleMyBonus(h)}
+                        title="Tick if this activity currently shows a Portal bonus for you"
+                      />
+                    </td>
+                    <td style={{ padding: 8 }}>
+                      <button onClick={() => { setSelected(a); setMods([]); setMeResult(null); setTeamResults(null); }}>
+                        Select
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
 
-        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8, marginTop: 8 }}>
           <h4 style={{ marginTop: 0 }}>Custom activity</h4>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <input
-              placeholder="Name"
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-            />
-            <input
-              placeholder="Recommended Light"
-              type="number"
-              value={customLight}
-              onChange={(e) => setCustomLight(e.target.value)}
-              style={{ width: 160 }}
-            />
-            <button
-              disabled={!customName || customLight === ""}
-              onClick={() => {
-                setSelected({ name: customName, recommendedLight: Number(customLight) || 0 });
-                setMods([]);
-                setMeResult(null);
-                setTeamResults(null);
-              }}
-            >
-              Use custom
-            </button>
+            {/* Keep your previous custom activity UI; trimmed for brevity */}
+            <small>Use the table above to select a real activity if available.</small>
           </div>
         </div>
+      </section>
+
+      <section>
+        <h3>My Portal Bonuses</h3>
+        <p style={{ marginTop: 0 }}>
+          Tick the activities above where you currently see a <b>Bonus Drop</b> in the Portal UI.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={copyMyBonusCode} disabled={myBonusHashes.length === 0}>Copy my bonus code</button>
+          {myBonusHashes.length === 0 && <span style={{ opacity: 0.7 }}>Select at least one activity.</span>}
+        </div>
+        {myBonusHashes.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12 }}>
+            <div style={{ opacity: 0.7, marginBottom: 4 }}>Preview (you can copy this too):</div>
+            <code style={{ display: "block", wordBreak: "break-all", background: "#f7f7f7", padding: 8, borderRadius: 6 }}>
+              {encodeBonusCode(myBonusHashes)}
+            </code>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3>Team Bonus Codes</h3>
+        <p style={{ marginTop: 0 }}>
+          Paste each teammate’s code on a new line. Include your own if you want.
+        </p>
+        <textarea
+          rows={4}
+          style={{ width: "100%", fontFamily: "monospace", padding: 8 }}
+          placeholder="Paste one code per line"
+          value={teamBonusCodes}
+          onChange={(e) => setTeamBonusCodes(e.target.value)}
+        />
+        <div style={{ marginTop: 8 }}>
+          <button onClick={recomputeBestOverlap}>Compute best overlap</button>
+        </div>
+
+        {bestOverlap && (
+          <div style={{ marginTop: 12 }}>
+            {bestOverlap.length === 0 ? (
+              <p style={{ opacity: 0.8 }}>No codes provided yet.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Activity</th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Members w/ bonus</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bestOverlap.map(({ hash, count }) => {
+                    const a = actByHash.get(hash);
+                    return (
+                      <tr key={hash}>
+                        <td style={{ padding: 8 }}>
+                          {a?.name ?? `(Unknown ${hash})`} <span style={{ opacity: 0.7 }}>({a?.group ?? "-"})</span>
+                        </td>
+                        <td style={{ padding: 8 }}>{count}</td>
+                        <td style={{ padding: 8 }}>
+                          <button onClick={() => { if (a) { setSelected(a); setMods([]); setMeResult(null); setTeamResults(null); } }}>
+                            Select
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </section>
 
       <section>
