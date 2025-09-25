@@ -1,12 +1,13 @@
 "use client";
-import { useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { useEffect, useState, useMemo } from "react";
+import { apiGet, apiPost } from "../lib/api";
 
 type Activity = {
   hash?: number;
   name?: string;
   recommendedLight?: number;
   group?: string;
+  modifiers?: string[] | any[];
 };
 
 export default function Dashboard() {
@@ -14,8 +15,26 @@ export default function Dashboard() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [selected, setSelected] = useState<Activity | null>(null);
   const [customName, setCustomName] = useState("");
-  const [customLight, setCustomLight] = useState<string>(""); // keep as string for controlled input
+  const [customLight, setCustomLight] = useState<string>("");
+  const [difficulty, setDifficulty] = useState<number>(1);
+  const [mods, setMods] = useState<string[]>([]);
+  const [result, setResult] = useState<any | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // derive available modifiers from selected activity (fallback to a small list)
+  const availableMods = useMemo(() => {
+    const fromAct =
+      (selected?.modifiers || [])
+        .map((m: any) => (typeof m === "string" ? m : m?.displayProperties?.name))
+        .filter(Boolean) as string[];
+    if (fromAct.length) return fromAct;
+    return ["Match Game", "Attrition", "Chaff", "Grounded", "Extinguish"];
+  }, [selected]);
+
+  function toggleMod(name: string) {
+    setResult(null);
+    setMods((prev) => (prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]));
+  }
 
   useEffect(() => {
     // Capture ?sid=... after redirect and stash it
@@ -40,6 +59,27 @@ export default function Dashboard() {
       }
     })();
   }, []);
+
+  async function computeMeOnly() {
+    setErr(null);
+    setResult(null);
+    if (!selected || !profile) {
+      setErr("Pick an activity first.");
+      return;
+    }
+    try {
+      const body = {
+        activity: { name: selected.name, recommendedLight: selected.recommendedLight, hash: selected.hash },
+        difficulty,
+        modifiers: mods,
+        members: [{ name: "You", power: Number(profile.highestPower) || 0, featuredCount: 0 }]
+      };
+      const out = await apiPost<{ results: any[] }>("/fireteam/compare", body);
+      setResult(out.results?.[0] ?? null);
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+    }
+  }
 
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
@@ -83,7 +123,7 @@ export default function Dashboard() {
                   <td style={{ padding: 8 }}>{a.group ?? "-"}</td>
                   <td style={{ padding: 8 }}>{a.recommendedLight ?? "?"}</td>
                   <td style={{ padding: 8 }}>
-                    <button onClick={() => setSelected(a)}>Select</button>
+                    <button onClick={() => { setSelected(a); setMods([]); setResult(null); }}>Select</button>
                   </td>
                 </tr>
               ))}
@@ -108,9 +148,11 @@ export default function Dashboard() {
             />
             <button
               disabled={!customName || customLight === ""}
-              onClick={() =>
-                setSelected({ name: customName, recommendedLight: Number(customLight) || 0 })
-              }
+              onClick={() => {
+                setSelected({ name: customName, recommendedLight: Number(customLight) || 0 });
+                setMods([]);
+                setResult(null);
+              }}
             >
               Use custom
             </button>
@@ -119,17 +161,57 @@ export default function Dashboard() {
       </section>
 
       <section>
-        <h3>Selected</h3>
-        {selected ? (
-          <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
-            <div><b>Name:</b> {selected.name ?? "(unknown)"}</div>
-            <div><b>Rec. Light:</b> {selected.recommendedLight ?? "?"}</div>
-            <div style={{ opacity: 0.7, marginTop: 8 }}>
-              Next step will add difficulty/modifiers and fireteam compare.
-            </div>
-          </div>
+        <h3>One-click: Compute grade (you only)</h3>
+        {!selected ? (
+          <p>Select an activity above first.</p>
         ) : (
-          <p>No activity selected yet.</p>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div>
+              <label>
+                Difficulty:{" "}
+                <select
+                  value={difficulty}
+                  onChange={(e) => { setDifficulty(Number(e.target.value)); setResult(null); }}
+                >
+                  <option value={0}>Easy</option>
+                  <option value={1}>Normal</option>
+                  <option value={2}>Hero</option>
+                  <option value={3}>Legend</option>
+                  <option value={4}>Master</option>
+                  <option value={5}>Grandmaster</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {availableMods.map((m) => (
+                <button
+                  key={m}
+                  onClick={() => toggleMod(m)}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #ccc",
+                    background: mods.includes(m) ? "#eee" : "white",
+                    cursor: "pointer"
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <div>
+              <button onClick={computeMeOnly}>Compute</button>
+            </div>
+            {result && (
+              <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
+                <div><b>Score:</b> {result.score}</div>
+                <div><b>Grade:</b> {result.grade}</div>
+                <div style={{ opacity: 0.8, marginTop: 6 }}>
+                  ΔPower vs rec: {result.components?.delta} • base {result.components?.base}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </section>
     </div>
