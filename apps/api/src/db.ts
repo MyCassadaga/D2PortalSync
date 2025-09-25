@@ -7,18 +7,23 @@ if (!conn) {
 
 export const pool = new Pool({
   connectionString: conn,
-  ssl: { rejectUnauthorized: false } // Neon uses SSL
+  // Neon uses SSL
+  ssl: { rejectUnauthorized: false }
 });
 
 export async function getSession(sessionId: string) {
   const { rows } = await pool.query(
-    "select * from sessions where id = $1 and expires_at > now()", [sessionId]
+    "select * from sessions where id = $1 and expires_at > now()",
+    [sessionId]
   );
   return rows[0] || null;
 }
 
 export async function storeSession(opts: {
-  membership_id: string, access_token: string, refresh_token?: string, expires_in: number
+  membership_id: string;
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
 }) {
   const expiresAt = new Date(Date.now() + opts.expires_in * 1000);
   const { rows } = await pool.query(
@@ -27,6 +32,22 @@ export async function storeSession(opts: {
     [opts.membership_id, opts.access_token, opts.refresh_token || null, expiresAt]
   );
   return rows[0].id as string;
+}
+
+// NEW: used by the refresher to update tokens in-place
+export async function updateSessionTokens(sessionId: string, opts: {
+  access_token: string;
+  refresh_token: string;
+  expires_at: Date;
+}) {
+  await pool.query(
+    `update sessions
+       set access_token = $1,
+           refresh_token = $2,
+           expires_at    = $3
+     where id = $4`,
+    [opts.access_token, opts.refresh_token, opts.expires_at, sessionId]
+  );
 }
 
 export async function ensureSchema() {
