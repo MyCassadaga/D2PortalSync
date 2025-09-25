@@ -2,12 +2,23 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 
+type Activity = {
+  hash?: number;
+  name?: string;
+  recommendedLight?: number;
+  group?: string;
+};
+
 export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [selected, setSelected] = useState<Activity | null>(null);
+  const [customName, setCustomName] = useState("");
+  const [customLight, setCustomLight] = useState<string>(""); // keep as string for controlled input
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    // Capture ?sid=... after redirect and stash it (for header-based auth)
+    // Capture ?sid=... after redirect and stash it
     try {
       const url = new URL(window.location.href);
       const sid = url.searchParams.get("sid");
@@ -21,7 +32,9 @@ export default function Dashboard() {
     (async () => {
       try {
         const p = await apiGet<any>("/me/profile");
-        setData(p);
+        setProfile(p);
+        const a = await apiGet<{ activities: Activity[] }>("/portal/activities");
+        setActivities(a.activities || []);
       } catch (e: any) {
         setErr(e?.message || String(e));
       }
@@ -29,11 +42,7 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2>Dashboard (stub)</h2>
-      {err && <pre>ERROR: {err}</pre>}
-      {!err && !data && <p>Loading...</p>}
-      {data && <pre>{JSON.stringify(data, null, 2)}</pre>}
-    </div>
-  );
-}
+    <div style={{ padding: 24, display: "grid", gap: 16 }}>
+      <h2>Dashboard</h2>
+
+      {err && (
