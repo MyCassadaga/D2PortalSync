@@ -28,6 +28,12 @@ export default function Dashboard() {
 
   const [err, setErr] = useState<string | null>(null);
 
+  async function logout() {
+    try { await apiPost("/auth/logout", {}); } catch {}
+    sessionStorage.removeItem("sid");
+    window.location.href = "/login";
+  }
+
   // derive available modifiers from selected activity (fallback to a small list)
   const availableMods = useMemo(() => {
     const fromAct =
@@ -136,7 +142,10 @@ export default function Dashboard() {
 
   return (
     <div style={{ padding: 24, display: "grid", gap: 16 }}>
-      <h2>Dashboard</h2>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2>Dashboard</h2>
+        <button onClick={logout}>Logout</button>
+      </header>
 
       {err && (
         <div style={{ color: "crimson" }}>
