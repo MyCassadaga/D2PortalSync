@@ -1,87 +1,29 @@
-// apps/api/src/index.ts
-import express from 'express';
-import cors from 'cors';
-import type { CorsOptions, CorsOptionsDelegate } from 'cors';
-import cookieParser from 'cookie-parser';
-import { z } from 'zod';
+// Start OAuth  (REPLACE this handler)
+app.get('/auth/login', (req, res) => {
+  // Preserve the page/query the user is on, default to /dashboard
+  const nextRaw = typeof req.query.next === 'string' ? req.query.next : '/dashboard';
+  const nextSafe = nextRaw && nextRaw.startsWith('/') ? nextRaw : '/dashboard';
 
-import profileRoutes from './routes/profile';
-import portalRoutes from './routes/portal';
-import forecastRoutes from './routes/forecast';
-import dbtestRoutes from './routes/dbtest';
-import { storeSession, ensureSchema } from './db';
-
-// ----- App setup (DECLARE APP FIRST) -----
-const app = express();
-
-// Build allowlist from env (comma-separated), supports wildcards like "*.vercel.app"
-const raw = (process.env.ALLOW_ORIGIN || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
-const isAllowed = (origin: string) => {
-  if (raw.length === 0) return true;           // allow all if unset (dev)
-  if (raw.includes(origin)) return true;       // exact match
-  try {
-    const { hostname } = new URL(origin);
-    for (const pat of raw) {
-      if (pat.startsWith('*.')) {
-        const suffix = pat.slice(2);
-        if (hostname === suffix || hostname.endsWith('.' + suffix)) return true;
-      }
-    }
-  } catch { /* ignore bad origins */ }
-  return false;
-};
-
-const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
-  const originHeader = (req.headers?.origin as string | undefined) || '';
-  let options: CorsOptions;
-  if (!originHeader || isAllowed(originHeader)) {
-    options = { origin: true, credentials: true };
-  } else {
-    options = { origin: false };
-  }
-  callback(null, options);
-};
-
-// Use CORS for all routes + explicitly handle preflight
-app.use(cors(corsOptionsDelegate));
-app.options('*', cors(corsOptionsDelegate));
-
-app.use(express.json());
-app.use(cookieParser());
-
-// Ensure schema on boot (does not crash the app if it fails)
-ensureSchema().catch(err => console.error('ensureSchema failed:', err?.message || err));
-
-// Health
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
-// ----- OAuth token schema -----
-const BungieTokenSchema = z.object({
-  token_type: z.string(),
-  access_token: z.string(),
-  expires_in: z.number(),
-  refresh_token: z.string().optional(),
-  refresh_expires_in: z.number().optional(),
-  membership_id: z.string().optional()
-});
-type BungieToken = z.infer<typeof BungieTokenSchema>;
-
-// Start OAuth
-app.get('/auth/login', (_req, res) => {
   const url = new URL('https://www.bungie.net/en/OAuth/Authorize');
   url.searchParams.set('client_id', String(process.env.BUNGIE_CLIENT_ID));
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('redirect_uri', String(process.env.OAUTH_REDIRECT_URL));
+  // carry "next" via OAuth state (URL-encoded so we can safely round-trip)
+  url.searchParams.set('state', encodeURIComponent(nextSafe));
+
   res.redirect(url.toString());
 });
 
-// OAuth callback
+// OAuth callback  (REPLACE this handler)
 app.get('/auth/callback', async (req, res) => {
   const code = (req.query.code as string) || '';
+  const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+  let nextPath = '/dashboard';
+  try {
+    const decoded = decodeURIComponent(stateParam);
+    if (decoded && decoded.startsWith('/')) nextPath = decoded;
+  } catch { /* ignore bad state */ }
+
   if (!code) {
     res.status(400).send('Missing code');
     return;
@@ -111,12 +53,20 @@ app.get('/auth/callback', async (req, res) => {
     return;
   }
 
-  const tokensJson: unknown = await tokenRes.json();
-  const tokens: BungieToken = BungieTokenSchema.parse(tokensJson);
+  // token parse/schema as before
+  const tokensJson: any = await tokenRes.json();
+  const tokens = {
+    token_type: String(tokensJson.token_type),
+    access_token: String(tokensJson.access_token),
+    expires_in: Number(tokensJson.expires_in),
+    refresh_token: tokensJson.refresh_token ? String(tokensJson.refresh_token) : undefined,
+    refresh_expires_in: tokensJson.refresh_expires_in ? Number(tokensJson.refresh_expires_in) : undefined,
+    membership_id: tokensJson.membership_id ? String(tokensJson.membership_id) : undefined
+  };
 
   const membershipId = tokens.membership_id ? tokens.membership_id : 'pending';
 
-  // Store server-side session, don’t crash if DB is down
+  // Store server-side session, with fallback cookie if DB fails
   let sessionId: string | null = null;
   try {
     sessionId = await storeSession({
@@ -140,29 +90,10 @@ app.get('/auth/callback', async (req, res) => {
     });
   }
 
-    const front = String(process.env.FRONTEND_URL || 'http://localhost:3000');
-  // add ?sid=... so the frontend can store it and use Authorization header
-  let redirectUrl = front + '/dashboard';
-  if (sessionId) redirectUrl += '?sid=' + encodeURIComponent(sessionId);
-  res.redirect(redirectUrl);
+  const frontBase = String(process.env.FRONTEND_URL || 'http://localhost:3000');
+  // Append "sid" to whatever path/query we preserved in state
+  const finalUrl = new URL(frontBase + nextPath);
+  if (sessionId) finalUrl.searchParams.set('sid', sessionId);
 
-});
-
-// ----- Feature routes (REGISTER AFTER app IS DECLARED) -----
-app.use(dbtestRoutes);
-app.use(profileRoutes);
-app.use(portalRoutes);
-app.use(forecastRoutes);
-
-// Optional: logout helper for testing
-app.post('/auth/logout', (_req, res) => {
-  res.clearCookie('session_id', { path: '/' });
-  res.clearCookie('session_tmp', { path: '/' });
-  res.json({ ok: true });
-});
-
-// ----- Start server -----
-const port = Number(process.env.PORT || 4000);
-app.listen(port, () => {
-  console.log('API listening on :' + port);
+  res.redirect(finalUrl.toString());
 });
